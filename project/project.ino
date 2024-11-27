@@ -5,47 +5,60 @@ const int trigPin = 12;
 const int echoPin = 11;
 
 // Pines para las bombas
-const int bombaEntradaPin = 9;  // Para llenar el agua
-const int bombaSalidaPin = 10;  // Para vaciar el agua
+const int inputBombPin = 9;  
+const int outputBombPin = 10;  
 
 // Constantes del controlador PID
-double Kp = 1.0;  // Ganancia proporcional
-double Ki = 0.1;  // Ganancia integral
-double Kd = 0.05; // Ganancia derivativa
+
+int amp = 1;
+double Kp = 5;  
+double Ki = 1;  
+double Kd = 0.05; 
 
 // Variables del sistema PID
-double setpoint = 6.0;   // Nivel objetivo en centímetros
-double input;             // Nivel medido (entrada para el PID)
-double output;            // Salida del controlador PID
-double lastError = 0.0;   // Error anterior para el término derivativo
-double integral = 0.0;    // Acumulador del término integral
+double setpoint ;   
+double input;             
+double output;            
+double lastError = 0.0;   
+double integral = 0.0;    
 
 // Variables de tiempo
 unsigned long lastTime = 0;
-unsigned long sampleTime = 10; // Tiempo de muestreo en milisegundos
+unsigned long sampleTime = 10; 
+
+unsigned long startTime;
+const unsigned long cycleDuration = 60000;  //20s
 
 void setup() {
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
   
-  // Configurar los pines de las bombas como salidas
-  pinMode(bombaEntradaPin, OUTPUT);
-  pinMode(bombaSalidaPin, OUTPUT);
+  pinMode(inputBombPin, OUTPUT);
+  pinMode(outputBombPin, OUTPUT);
   
-  // Inicialmente, apagamos las bombas
-  analogWrite(bombaEntradaPin, 0);
-  analogWrite(bombaSalidaPin, 0);
+  analogWrite(inputBombPin, 0);
+  analogWrite(outputBombPin, 0);
   
   Serial.begin(9600);
 }
 
 void loop() {
-  // Leer el nivel del agua con el sensor ultrasónico
-  input = medirNivelAgua(); 
+  input = measureWaterLevel(); 
   unsigned long now = millis();
   unsigned long timeChange = now - lastTime;
 
-  setpoint = (analogRead(A0) + 1)/128 + 4;
+  unsigned long elapsedTime = now - startTime;
+
+
+  if (elapsedTime >= cycleDuration) {
+    startTime = now;  
+    elapsedTime = 0;
+  }
+
+  float cycleProgress = (float)elapsedTime / cycleDuration;
+  int option = analogRead(A2) / 250;
+  setpoint =  getSetpoint(option, cycleProgress);
+
   
 
 
@@ -56,37 +69,43 @@ void loop() {
     double derivative = (error - lastError) / (timeChange / 1000.0);
     output = (Kp * error) + (Ki * integral) + (Kd * derivative);
 
-    if (error < 0.30 && error >-0.30){
-       analogWrite(bombaSalidaPin, 0);
-       analogWrite(bombaEntradaPin, 0); 
+    if (error < 0.20 && error >-0.20){
+       analogWrite(outputBombPin, 0);
+       analogWrite(inputBombPin, 0); 
     }else{
       if (error > 0) {
-        analogWrite(bombaEntradaPin, constrain(output, 128, 255));
-        analogWrite(bombaSalidaPin, 0); // Apagar la bomba de salida
+        analogWrite(inputBombPin, 255);
+        analogWrite(outputBombPin, 0); // Apagar la bomba de salida
       } else {
-        analogWrite(bombaSalidaPin, constrain(-output, 128, 255));
-        analogWrite(bombaEntradaPin, 0); 
+        analogWrite(outputBombPin, 255);
+        analogWrite(inputBombPin, 0); 
       }
     }
 
     lastError = error;
     lastTime = now;
 
-    Serial.print("Nivel del Agua (cm): "); Serial.print(input);
+    Serial.print("Water level (cm): "); Serial.print(input);
+    Serial.print(" | Option: "); Serial.print(option); 
     Serial.print(" | error: "); Serial.print(error);
     Serial.print(" | Setpoint: "); Serial.print(setpoint);
-    Serial.print(" | Salida PID: "); Serial.println(output);
+    Serial.print(" | PID output: "); Serial.println(output);
   }
 }
 
 // Función para medir el nivel de agua usando el sensor ultrasónico
-double medirNivelAgua() {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
+double measureWaterLevel() {
 
+  digitalWrite(trigPin, LOW);
+  
+  unsigned long now = micros();
+  while(micros()-now <= 2);
+  digitalWrite(trigPin, HIGH);
+
+  now = micros();
+  while(micros()-now <= 10);
+  digitalWrite(trigPin, LOW);
+  
   // Leer el tiempo de ida y vuelta de la señal
   long duration = pulseIn(echoPin, HIGH);
 
@@ -96,15 +115,43 @@ double medirNivelAgua() {
   return distance; // Nivel del agua en cm
 }
 
-double getSetPoint(){
-  
-  double selector = (analogRead(A2) + 1)/204.8; 
+float getSetpoint(int option, float progress){
+  if (option == 0)
+    return ((analogRead(A0) + 1)/(1000/6) + 4);
+  else if (option == 1)
+    return generateSquare(progress); 
+  else if (option == 2)
+    return generateTriangular(progress); 
+  else if (option == 3)
+    return generateSine(progress); 
+  else 
+    return generateSawtoothValue(progress); 
+}
 
-  if (selector == 0)
-    return (analogRead(A0) + 1)/128 + 4;
-  else if (selector == 1)
-    return 
 
+int generateSquare(float progress) {
+  int squareState = (progress < 0.5) ?  10 : 5 ;  
+  //Serial.println(squareState);
+  return squareState; 
+}
 
+int generateTriangular(float progress) {
+  float triangleValue = (progress < 0.5) ? (progress * 2 * 255) : ((1 - progress) * 2 * 255);
+  triangleValue = (int) (triangleValue) / 64 + 5;  
+  //Serial.println(triangleValue);
+  return triangleValue; 
+}
 
+int generateSine(float progress) {
+  float sineValue = 127.5 * (1 + sin(2 * PI * progress));  
+  sineValue =(int)(sineValue/42.5 + 4); 
+  //Serial.println(sineValue);
+  return sineValue;
+}
+
+int generateSawtoothValue(float progress) {
+  float sawtoothValue = progress * 255;  
+  sawtoothValue = (int) (sawtoothValue/(255/5) + 5);
+  //Serial.println(sawtoothValue);
+  return sawtoothValue; 
 }
